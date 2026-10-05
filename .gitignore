@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+.venv/
+venv/
+reco_venv/
+
+# Local data / generated datasets
+data/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Environment / secrets
+.env
+.env.*
+
+# Logs
+*.log
+
+# Docker
+*.pid
+
+# Experimental model artifacts
+models/item_index.faiss
+models/item_index_ivf.faiss
+models/linear_ranker.pt
+models/mf_model.pt
+models/neural_ranker*.pt
+models/validation_mf_model.pt

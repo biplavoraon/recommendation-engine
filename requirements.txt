@@ -1,0 +1,11 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+fastapi
+uvicorn[standard]
+sqlalchemy
+psycopg[binary]
+pydantic-settings
+redis
+numpy
+torch
+faiss-cpu
