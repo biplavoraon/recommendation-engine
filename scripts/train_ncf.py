@@ -6,12 +6,18 @@ import torch
 from torch.utils.data import DataLoader
 
 from app.ml.dataset import BPRDataset
-from app.ml.matrix_factorization import MatrixFactorization
 from app.ml.losses import bpr_loss
+from app.ml.neural_collaborative_filtering import (
+    NeuralCollaborativeFiltering,
+)
 
 
 SEED = 42
+
 EMBEDDING_DIM = 64
+HIDDEN_DIMS = (128, 64)
+DROPOUT = 0.2
+
 BATCH_SIZE = 1024
 EPOCHS = 20
 LEARNING_RATE = 0.001
@@ -42,23 +48,31 @@ def main():
             f"GPU: {torch.cuda.get_device_name(0)}"
         )
 
+    # --------------------------------------------------
+    # Load exactly the same temporal split used by MF
+    # --------------------------------------------------
+
     with open(
         "data/mf_data.pkl",
         "rb",
     ) as f:
         data = pickle.load(f)
 
-    train_items = data["train_items"]
+    train_items = [
+        (user_id, item_id)
+        for user_id, items in data["train_items"].items()
+        for item_id in items
+    ]
 
     num_users = len(data["user_to_idx"])
     num_items = len(data["item_to_idx"])
 
+    # --------------------------------------------------
+    # BPR dataset
+    # --------------------------------------------------
+
     dataset = BPRDataset(
-        interactions=[
-            (user_id, item_id)
-            for user_id, items in train_items.items()
-            for item_id in items
-        ],
+        interactions=train_items,
         num_items=num_items,
     )
 
@@ -68,10 +82,16 @@ def main():
         shuffle=True,
     )
 
-    model = MatrixFactorization(
+    # --------------------------------------------------
+    # NCF model
+    # --------------------------------------------------
+
+    model = NeuralCollaborativeFiltering(
         num_users=num_users,
         num_items=num_items,
         embedding_dim=EMBEDDING_DIM,
+        hidden_dims=HIDDEN_DIMS,
+        dropout=DROPOUT,
     ).to(DEVICE)
 
     optimizer = torch.optim.Adam(
@@ -84,6 +104,10 @@ def main():
     print(f"Items: {num_items}")
     print(f"Training samples: {len(dataset)}")
 
+    # --------------------------------------------------
+    # Training
+    # --------------------------------------------------
+
     for epoch in range(EPOCHS):
 
         model.train()
@@ -92,7 +116,6 @@ def main():
 
         for users, positives, negatives in loader:
 
-            # Move batch to GPU
             users = users.to(DEVICE)
             positives = positives.to(DEVICE)
             negatives = negatives.squeeze(1).to(DEVICE)
@@ -129,20 +152,26 @@ def main():
             f"Loss: {average_loss:.4f}"
         )
 
+    # --------------------------------------------------
+    # Save model
+    # --------------------------------------------------
+
     torch.save(
         {
             "model_state_dict": model.state_dict(),
             "num_users": num_users,
             "num_items": num_items,
             "embedding_dim": EMBEDDING_DIM,
+            "hidden_dims": HIDDEN_DIMS,
+            "dropout": DROPOUT,
             "user_to_idx": data["user_to_idx"],
             "item_to_idx": data["item_to_idx"],
         },
-        "models/mf_model.pt",
+        "models/ncf_model.pt",
     )
 
     print(
-        "Model saved to models/mf_model.pt"
+        "Model saved to models/ncf_model.pt"
     )
 
 

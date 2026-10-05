@@ -2,7 +2,9 @@
 
 An end-to-end recommendation system built with **PyTorch, FAISS, FastAPI, PostgreSQL, Redis, and Docker**.
 
-The system learns personalized item embeddings using **Matrix Factorization with Bayesian Personalized Ranking (BPR)**, retrieves candidates using **FAISS**, serves recommendations through a **FastAPI** service, and uses **Redis caching** to reduce online serving latency.
+The system learns personalized user and item representations from implicit-feedback interactions, retrieves candidates using **FAISS**, serves recommendations through a **FastAPI** service, and uses **Redis caching** to reduce online serving latency.
+
+The final production path uses **Matrix Factorization with Bayesian Personalized Ranking (BPR)** because it provided strong retrieval quality while remaining simple and efficient for serving.
 
 ## Architecture
 
@@ -62,6 +64,7 @@ The system learns personalized item embeddings using **Matrix Factorization with
 
 - Personalized recommendation using Matrix Factorization
 - BPR loss for implicit-feedback learning
+- Neural Collaborative Filtering experiment
 - Temporal train/validation/test splitting
 - FAISS-based approximate/exact candidate retrieval
 - PostgreSQL data layer
@@ -77,7 +80,7 @@ The system learns personalized item embeddings using **Matrix Factorization with
 |---|---|
 | Language | Python |
 | ML | PyTorch |
-| Recommendation model | Matrix Factorization + BPR |
+| Recommendation models | Matrix Factorization + BPR, Neural Collaborative Filtering |
 | Candidate retrieval | FAISS |
 | Database | PostgreSQL |
 | Cache | Redis |
@@ -180,34 +183,64 @@ The project uses the **MovieLens 100K** dataset:
 - 1,682 items
 - 100,000 interactions
 
-The evaluation uses temporal splitting so that future interactions are not used to predict the past.
+The main evaluation uses a temporal split where the **most recent interaction for each user is held out for testing**, while earlier interactions are used for training.
 
-For the final ranking evaluation, the development data is further divided temporally into training, validation, and test portions.
+This gives:
 
-This prevents information from future interactions from leaking into model training.
+```text
+Training interactions: 99,057
+Held-out test users:      943
+```
+
+The split prevents future interactions from being used to predict earlier behavior.
 
 ---
 
 ## Model Evaluation
 
-The initial popularity baseline achieved:
+The popularity baseline and collaborative-filtering models were evaluated on the same temporal split.
 
 | Model | Recall@10 | NDCG@10 |
 |---|---:|---:|
 | Popularity | 0.0753 | 0.0394 |
-| Matrix Factorization | 0.0870 | 0.0420 |
+| Matrix Factorization + BPR | 0.0997 | 0.0503 |
+| Neural Collaborative Filtering + BPR | 0.0976 | **0.0513** |
 
-The temporally trained MF model used for the serving pipeline achieved:
+### Interpretation
 
-| Metric | Score |
-|---|---:|
-| Recall@10 | **0.1004** |
-| NDCG@10 | **0.0486** |
-| Candidate Recall@500 | **0.8876** |
+The results show that the neural interaction model is competitive with classical matrix factorization.
 
-Candidate Recall@500 of 88.76% means that approximately 88.8% of validation target items were present in the retrieved candidate set.
+- **MF achieves slightly higher Recall@10**, meaning it places the held-out item in the top 10 for slightly more users.
+- **NCF achieves slightly higher NDCG@10**, indicating somewhat better ranking quality among the successful recommendations.
 
-Therefore, candidate generation places an upper bound on the recall achievable by any downstream ranking model.
+The differences are small, so the simpler MF model was retained for the final serving pipeline.
+
+### Neural Collaborative Filtering Experiment
+
+A Neural Collaborative Filtering (NCF) model was implemented as a separate experimental model:
+
+```text
+User ID ──→ User Embedding ──┐
+                             ├── Concatenate ──→ MLP ──→ Score
+Item ID ──→ Item Embedding ──┘
+```
+
+Configuration:
+
+```text
+User/item embedding dimension: 64
+MLP:                           128 → 64 → 1
+Dropout:                       0.2
+Loss:                          BPR
+Epochs:                        20
+Batch size:                    1024
+Learning rate:                 0.001
+Weight decay:                  1e-6
+```
+
+The NCF experiment uses the same temporal split, negative-sampling procedure, optimizer settings, and evaluation metrics as the MF baseline. This makes the comparison directly measurable rather than comparing models trained under different evaluation protocols.
+
+The NCF model is retained as an experimental implementation demonstrating neural recommendation modeling and empirical model selection, but it is not used in the production serving path.
 
 ---
 
@@ -382,6 +415,7 @@ recommendation-engine/
 │       ├── dataset.py
 │       ├── losses.py
 │       ├── matrix_factorization.py
+│       ├── neural_collaborative_filtering.py
 │       ├── features.py
 │       ├── ranker.py
 │       ├── ranker_losses.py
@@ -399,6 +433,8 @@ recommendation-engine/
 │   ├── load_movielens.py
 │   ├── train_mf.py
 │   ├── evaluate_mf.py
+│   ├── train_ncf.py
+│   ├── evaluate_ncf.py
 │   ├── build_faiss_index.py
 │   ├── evaluate_candidates.py
 │   ├── build_features.py
@@ -419,7 +455,7 @@ recommendation-engine/
 ### 1. Clone the repository
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/biplavoraon/recommendation-engine.git
 cd recommendation-engine
 ```
 
@@ -539,7 +575,13 @@ Throughput
 
 ### Why Matrix Factorization?
 
-Matrix Factorization provides a simple and strong baseline for collaborative filtering while producing compact user and item embeddings suitable for approximate nearest-neighbor retrieval.
+Matrix Factorization provides a strong collaborative-filtering baseline while producing compact user and item embeddings suitable for vector retrieval.
+
+### Why evaluate NCF?
+
+Neural Collaborative Filtering provides a neural alternative to the linear interaction function used by classical MF. It was evaluated under the same temporal split and BPR objective to determine whether additional model complexity improved recommendation quality.
+
+In this experiment, NCF achieved slightly better NDCG@10, while MF achieved slightly better Recall@10. The gains were small, so MF remained the production model.
 
 ### Why BPR?
 
@@ -560,6 +602,8 @@ Docker provides reproducible deployment of the API, database, and cache as a sin
 ### Why not use the neural ranker?
 
 The downstream ranking experiments showed strong training performance but poor held-out generalization on the full candidate set. The simpler MF retrieval pipeline performed more reliably on the validation data and was therefore selected for the final system.
+
+This was a deliberate model-selection decision based on held-out performance rather than choosing the most complex model.
 
 ---
 
